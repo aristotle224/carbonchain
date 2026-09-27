@@ -23,16 +23,15 @@ describe('AdminController', () => {
           useValue: {
             getStats: jest.fn().mockResolvedValue({
               totalCredits: 0,
-              totalRetirements: 0,
+              totalRetirements: 5,
               activeVerifiers: 3,
               paused: false,
             }),
+            registerVerifier: jest.fn().mockResolvedValue({ registered: true, address: 'GVER1' }),
             suspendVerifier: jest.fn().mockResolvedValue({ suspended: true }),
-            flagCredit: jest.fn().mockResolvedValue({
-              flagged: true,
-              creditId: 'abc',
-              status: CreditStatus.Flagged,
-            }),
+            // #924 — flagCredit and configureVerifier throw 501
+            flagCredit: jest.fn().mockRejectedValue(new NotImplementedException()),
+            configureVerifier: jest.fn().mockRejectedValue(new NotImplementedException()),
             registerMethodology: jest.fn().mockReturnValue({
               registered: true,
               name: 'VCS',
@@ -73,9 +72,11 @@ describe('AdminController', () => {
     service = module.get(AdminService);
   });
 
-  it('GET /admin/stats returns stats', async () => {
+  it('GET /admin/stats returns stats with tri-state contractPauseStatus', async () => {
     const result = await controller.getStats();
     expect(result.activeVerifiers).toBe(3);
+    expect(result.contractPauseStatus).toBe('unpaused');
+    expect(result.health.degraded).toBe(false);
     expect(service.getStats).toHaveBeenCalled();
   });
 

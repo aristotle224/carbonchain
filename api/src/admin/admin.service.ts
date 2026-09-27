@@ -7,7 +7,6 @@ import { VerifiersService } from '../verifiers/verifiers.service';
 import { RetirementService } from '../retirement/retirement.service';
 import { StellarService } from '../stellar/stellar.service';
 import { StellarKeypairService } from '../stellar/stellar-keypair.service';
-import { CreditStatus } from '../../../shared';
 import { nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import { AdminAuditEntity } from './admin-audit.entity';
 
@@ -15,7 +14,12 @@ export interface AdminStats {
   totalCredits: number;
   totalRetirements: number;
   activeVerifiers: number;
+  /** @deprecated Use contractPauseStatus for tri-state; kept for backward compat */
   paused: boolean;
+  /** #926 — Tri-state pause status. 'unknown' means the probe failed. */
+  contractPauseStatus: ContractPauseStatus;
+  /** #926 — true when any probe failed, so the UI can show a degraded indicator */
+  health: { degraded: boolean; reason?: string };
 }
 
 export interface VerifierCapabilities {
@@ -48,7 +52,6 @@ export class AdminService {
   private readonly creditRegistryContractId: string;
 
   constructor(
-    private readonly creditsService: CreditsService,
     private readonly verifiersService: VerifiersService,
     private readonly configService: ConfigService,
     private readonly stellarService: StellarService,
@@ -98,11 +101,17 @@ export class AdminService {
 
   async getStats(): Promise<AdminStats> {
     const verifiers = await this.verifiersService.listVerifiers();
-    let paused = false;
+
+    // #926 — tri-state pause probe: catch errors and surface as 'unknown'
+    let contractPauseStatus: ContractPauseStatus = 'unknown';
+    let probeError: string | undefined;
     try {
-      paused = await this.getContractPaused();
-    } catch {
-      // Non-fatal — default to false if contract call fails.
+      const isPaused = await this.getContractPaused();
+      contractPauseStatus = isPaused ? 'paused' : 'unpaused';
+    } catch (err: unknown) {
+      probeError = (err as Error)?.message ?? 'contract probe failed';
+      this.logger.warn(`Pause probe failed — surfacing as unknown: ${probeError}`);
+      // contractPauseStatus stays 'unknown'
     }
     const [totalCredits, retirements] = await Promise.all([
       this.creditsService.getCreditCount(),
@@ -114,7 +123,13 @@ export class AdminService {
       totalCredits,
       totalRetirements: retirements.total,
       activeVerifiers: verifiers.length,
-      paused,
+      // Backward-compat boolean: treat 'unknown' as false so existing consumers don't break.
+      paused: contractPauseStatus === 'paused',
+      contractPauseStatus,
+      health: {
+        degraded: contractPauseStatus === 'unknown',
+        reason: probeError,
+      },
     };
   }
 
@@ -172,6 +187,17 @@ export class AdminService {
     return { paused: false };
   }
 
+  // ── #924 — verifier lifecycle ──────────────────────────────────────────────
+
+  /**
+   * Register a verifier on-chain via `register_verifier`.
+   *
+   * The verifier must have already deposited the minimum stake (via
+   * `POST /verifiers/:address/stake/deposit`) before this call succeeds —
+   * the contract enforces `InsufficientStake` otherwise.
+   *
+   * Consumes one admin nonce.
+   */
   async registerVerifier(
     address: string,
     ctx: AuditContext = { actor: 'system' },
@@ -207,11 +233,24 @@ export class AdminService {
   }
 
   async suspendVerifier(id: string): Promise<{ suspended: boolean }> {
+    // Confirm the verifier exists in our registry before hitting the chain.
     await this.verifiersService.getVerifier(id);
     this.logger.log(`Verifier ${id} suspended by admin`);
     return { suspended: true };
   }
 
+  /**
+   * Configure a verifier's service capabilities.
+   *
+   * The contract's `configure_verifier_services` requires the **verifier** to
+   * sign the transaction with their own keypair — this is NOT an admin
+   * operation. The admin panel cannot perform this action on behalf of the
+   * verifier. The verifier must call `POST /verifiers/:address/services`
+   * themselves (via Freighter / their own wallet).
+   *
+   * Returns HTTP 501 so callers know the endpoint exists but is intentionally
+   * not implemented at admin level.
+   */
   async configureVerifier(
     id: string,
     capabilities: VerifierCapabilities,

@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, NotImplementedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { nativeToScVal } from '@stellar/stellar-sdk';
@@ -12,19 +12,7 @@ import { StellarKeypairService } from '../stellar/stellar-keypair.service';
 import { RetirementService } from '../retirement/retirement.service';
 import { CreditStatus } from '../../../shared';
 import { Keypair } from '@stellar/stellar-sdk';
-
-const mockCredit = {
-  id: 'abc123',
-  project_id: 'proj_1',
-  issuer: 'GABC',
-  vintage_year: 2024,
-  methodology: 'VCS',
-  geography: 'NG',
-  tonnes: '1000000',
-  ipfs_hash: 'bafybei',
-  status: CreditStatus.Active,
-  issued_at: 1700000000,
-};
+import { RETIREMENT_REPOSITORY } from '../retirement/retirement.repository';
 
 const mockAuditCtx = {
   actor: 'GADMINPUBLICKEY',
@@ -35,7 +23,6 @@ const mockAuditCtx = {
 
 describe('AdminService', () => {
   let service: AdminService;
-  let creditsService: jest.Mocked<CreditsService>;
   let verifiersService: jest.Mocked<VerifiersService>;
   let stellarService: jest.Mocked<StellarService>;
   let keypairService: jest.Mocked<StellarKeypairService>;
@@ -46,6 +33,16 @@ describe('AdminService', () => {
   };
 
   const mockAdminKeypair = Keypair.random();
+
+  const mockRetirementRepo = {
+    save: jest.fn(),
+    saveAll: jest.fn(),
+    findById: jest.fn(),
+    findByBuyer: jest.fn(),
+    findAll: jest.fn(),
+    // #925 — COUNT-based query
+    count: jest.fn().mockResolvedValue(5),
+  };
 
   beforeEach(async () => {
     const mockQb = {
@@ -120,14 +117,21 @@ describe('AdminService', () => {
     }).compile();
 
     service = module.get(AdminService);
-    creditsService = module.get(CreditsService);
     verifiersService = module.get(VerifiersService);
     stellarService = module.get(StellarService);
     keypairService = module.get(StellarKeypairService);
+    jest.clearAllMocks();
+    // reset count mock after clearAllMocks
+    mockRetirementRepo.count.mockResolvedValue(5);
   });
 
+  // ── #925 + #926 ────────────────────────────────────────────────────────────
+
   describe('getStats', () => {
-    it('should return stats with active verifier count and paused state', async () => {
+    it('should return stats with activeVerifierCount and tri-state contractPauseStatus', async () => {
+      verifiersService.listVerifiers = jest
+        .fn()
+        .mockResolvedValue([{ address: 'GVER1' }, { address: 'GVER2' }]);
       stellarService.readContract.mockResolvedValue({
         type: 'bool',
         value: false,
@@ -136,24 +140,90 @@ describe('AdminService', () => {
       expect(stats.activeVerifiers).toBe(2);
       expect(stats).toHaveProperty('totalCredits');
       expect(stats).toHaveProperty('totalRetirements');
-      expect(stats).toHaveProperty('paused');
-      expect(stats.paused).toBe(false);
+      expect(stats).toHaveProperty('contractPauseStatus');
+      expect(stats).toHaveProperty('health');
     });
 
-    it('should default paused to false when contract call fails', async () => {
+    it('#926 — contractPauseStatus is "unpaused" when probe returns false', async () => {
+      stellarService.readContract.mockResolvedValue({
+        type: 'bool',
+        value: false,
+      } as any);
+      const stats = await service.getStats();
+      expect(stats.contractPauseStatus).toBe('unpaused');
+      expect(stats.paused).toBe(false);
+      expect(stats.health.degraded).toBe(false);
+    });
+
+    it('#926 — contractPauseStatus is "paused" when probe returns true', async () => {
+      // scValToNative-able truthy value
+      stellarService.readContract.mockResolvedValue(
+        nativeToScVal(true, { type: 'bool' }),
+      );
+      const stats = await service.getStats();
+      expect(stats.contractPauseStatus).toBe('paused');
+      expect(stats.paused).toBe(true);
+      expect(stats.health.degraded).toBe(false);
+    });
+
+    it('#926 — contractPauseStatus is "unknown" and health.degraded is true when probe throws', async () => {
       stellarService.readContract.mockRejectedValue(
         new Error('Contract unavailable'),
       );
       const stats = await service.getStats();
+      expect(stats.contractPauseStatus).toBe('unknown');
+      // Backward-compat boolean must not claim paused when unknown
       expect(stats.paused).toBe(false);
+      expect(stats.health.degraded).toBe(true);
+      expect(stats.health.reason).toContain('Contract unavailable');
+    });
+
+    it('#925 — totalRetirements comes from COUNT query, not pagination', async () => {
+      stellarService.readContract.mockResolvedValue({
+        type: 'bool',
+        value: false,
+      } as any);
+      mockRetirementRepo.count.mockResolvedValue(42);
+      const stats = await service.getStats();
+      expect(stats.totalRetirements).toBe(42);
+      expect(mockRetirementRepo.count).toHaveBeenCalledTimes(1);
+      expect(mockRetirementRepo.findAll).not.toHaveBeenCalled();
     });
   });
+
+  // ── #924 — registerVerifier ────────────────────────────────────────────────
+
+  describe('registerVerifier', () => {
+    it('should call register_verifier on-chain and return registered: true', async () => {
+      // Mock nonce fetch
+      stellarService.readContract.mockResolvedValue(
+        nativeToScVal(0n, { type: 'u64' }),
+      );
+      stellarService.invokeContract.mockResolvedValue({});
+      const result = await service.registerVerifier('GVER1');
+      expect(result).toEqual({ registered: true, address: 'GVER1' });
+      expect(stellarService.invokeContract).toHaveBeenCalledWith(
+        expect.any(String),
+        'register_verifier',
+        expect.any(Array),
+        mockAdminKeypair,
+      );
+    });
+  });
+
+  // ── #924 — suspendVerifier ────────────────────────────────────────────────
 
   describe('suspendVerifier', () => {
     it('should return suspended: true for existing verifier', async () => {
       const result = await service.suspendVerifier('GVER1', mockAuditCtx);
       expect(result).toEqual({ suspended: true });
       expect(verifiersService.getVerifier).toHaveBeenCalledWith('GVER1');
+      expect(stellarService.invokeContract).toHaveBeenCalledWith(
+        expect.any(String),
+        'remove_verifier',
+        expect.any(Array),
+        mockAdminKeypair,
+      );
     });
 
     it('should write an audit row on success', async () => {
@@ -186,6 +256,7 @@ describe('AdminService', () => {
       });
       expect(creditsService.getCredit).toHaveBeenCalledWith('abc123');
     });
+  });
 
     it('should write an audit row capturing before/after state', async () => {
       await service.flagCredit('abc123', mockAuditCtx);
@@ -207,6 +278,8 @@ describe('AdminService', () => {
       );
     });
   });
+
+  // ── Other ─────────────────────────────────────────────────────────────────
 
   describe('pauseContract', () => {
     it('should invoke pause on the credit registry and return paused: true', async () => {
