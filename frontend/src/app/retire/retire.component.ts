@@ -139,8 +139,10 @@ export function multipleOf100kValidator(): ValidatorFn {
             @if (s < 3) {
               <div class="step-divider"></div>
             }
-          }
+          </ol>
         </nav>
+
+        <p class="visually-hidden" role="status">{{ stepAnnouncement() }}</p>
 
         <!-- ── Step 1: Select Credits ── -->
         @if (currentStep() === 1) {
@@ -274,13 +276,16 @@ export function multipleOf100kValidator(): ValidatorFn {
           </section>
         }
 
-        <!-- ── Step 3: Confirm & Sign ── -->
+        <!-- ── Step 3: Confirm & Submit ── -->
         @if (currentStep() === 3) {
           <section class="step-panel" aria-labelledby="step3-heading">
             <h2 id="step3-heading">{{ 'retire.step3Title' | translate }}</h2>
 
             @if (signingError()) {
               <p class="field-error" role="alert">{{ signingError() }}</p>
+            }
+            @if (statusMessage()) {
+              <p class="status-message" role="status">{{ statusMessage() }}</p>
             }
 
             @if (tonnesControl.invalid) {
@@ -347,7 +352,19 @@ export function multipleOf100kValidator(): ValidatorFn {
       h1 {
         margin-bottom: 1.5rem;
       }
-
+      /* Issue #963: visually hidden but announced by assistive tech. */
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
+      }
       .auth-prompt {
         display: flex;
         flex-direction: column;
@@ -360,17 +377,17 @@ export function multipleOf100kValidator(): ValidatorFn {
         border-radius: 6px;
         padding: 0.75rem 1rem;
         margin-bottom: 1rem;
-        color: #856404;
+        color: #6b4f00;
         font-size: 0.9rem;
       }
-      .wizard-form {
 
       /* Step indicator */
-      .step-indicator {
+      .step-indicator__list {
         display: flex;
         align-items: center;
-        gap: 0;
-        margin-bottom: 2rem;
+        list-style: none;
+        margin: 0 0 2rem;
+        padding: 0;
       }
       .step {
         display: flex;
@@ -379,14 +396,14 @@ export function multipleOf100kValidator(): ValidatorFn {
         padding: 0.4rem 0.6rem;
         border-radius: 6px;
         font-size: 0.85rem;
-        color: #888;
+        color: #595959;
       }
       .step--active {
-        color: #2e7d32;
+        color: #1b5e20;
         font-weight: 600;
       }
       .step--done {
-        color: #4caf50;
+        color: #2e7d32;
       }
       .step__num {
         width: 24px;
@@ -399,12 +416,6 @@ export function multipleOf100kValidator(): ValidatorFn {
         font-size: 0.75rem;
         font-weight: 700;
         flex-shrink: 0;
-      }
-      .step-divider {
-        flex: 1;
-        height: 2px;
-        background: #e0e0e0;
-        min-width: 24px;
       }
 
       /* Step panel */
@@ -426,24 +437,27 @@ export function multipleOf100kValidator(): ValidatorFn {
       .credit-table th,
       .credit-table td {
         padding: 0.6rem 0.8rem;
-        border-bottom: 1px solid #eee;
+        border-bottom: 1px solid #e0e0e0;
         text-align: left;
       }
       .credit-table th {
-        background: #f5f5f5;
+        background: #f0f0f0;
         font-weight: 600;
-      }
-      .credit-row {
-        cursor: pointer;
-      }
-      .credit-row:hover {
-        background: #f9f9f9;
       }
       .credit-row--selected {
         background: #e8f5e9;
       }
-      .credit-row:focus {
-        outline: 2px solid #4caf50;
+      /* Issue #963: rows are not click targets any more (the checkbox is), so
+         the interactive styling moved onto the checkbox itself. */
+      input[type='checkbox'] {
+        width: 1.1rem;
+        height: 1.1rem;
+        cursor: pointer;
+        accent-color: #2e7d32;
+      }
+      input[type='checkbox']:focus-visible {
+        outline: 3px solid #1b5e20;
+        outline-offset: 2px;
       }
       /* #962 — narrow viewports scroll the table instead of overflowing. */
       .table-scroll {
@@ -454,7 +468,7 @@ export function multipleOf100kValidator(): ValidatorFn {
       /* Step 2 */
       .selected-summary {
         font-size: 0.85rem;
-        color: #555;
+        color: #4a4a4a;
         margin-bottom: 1rem;
         display: flex;
         gap: 0.5rem;
@@ -469,29 +483,35 @@ export function multipleOf100kValidator(): ValidatorFn {
       }
       textarea {
         padding: 0.5rem 0.75rem;
-        border: 1px solid #ccc;
+        border: 1px solid #8c8c8c;
         border-radius: 6px;
         font-size: 0.9rem;
         font-family: inherit;
         resize: vertical;
       }
-      textarea:focus {
-        outline: 2px solid #4caf50;
+      textarea:focus-visible {
+        outline: 3px solid #1b5e20;
         outline-offset: 1px;
       }
       .hint {
         font-size: 0.78rem;
-        color: #888;
+        color: #595959;
       }
       .field-error {
         font-size: 0.83rem;
-        color: #e53935;
+        color: #c62828;
+        font-weight: 500;
+      }
+      .status-message {
+        font-size: 0.85rem;
+        color: #1b5e20;
+        font-weight: 500;
       }
 
       /* Step 3 */
       .confirm-box {
         background: #f9f9f9;
-        border: 1px solid #ddd;
+        border: 1px solid #d0d0d0;
         border-radius: 8px;
         padding: 1.25rem;
         margin-bottom: 1rem;
@@ -505,7 +525,7 @@ export function multipleOf100kValidator(): ValidatorFn {
       }
       dt {
         font-weight: 600;
-        color: #555;
+        color: #4a4a4a;
       }
       .mono {
         font-family: monospace;
@@ -513,7 +533,7 @@ export function multipleOf100kValidator(): ValidatorFn {
       }
       .sign-info {
         font-size: 0.85rem;
-        color: #666;
+        color: #4a4a4a;
         margin-bottom: 1rem;
         background: #fff8e1;
         border: 1px solid #ffe082;
@@ -530,7 +550,7 @@ export function multipleOf100kValidator(): ValidatorFn {
       }
       .selection-hint {
         font-size: 0.85rem;
-        color: #555;
+        color: #4a4a4a;
         margin-bottom: 0.5rem;
       }
       .credit-details {
@@ -545,7 +565,7 @@ export function multipleOf100kValidator(): ValidatorFn {
         line-height: 1.6;
       }
       .status {
-        color: #888;
+        color: #595959;
       }
       .draft-notice,
       .draft-restored {
@@ -569,29 +589,29 @@ export function multipleOf100kValidator(): ValidatorFn {
         font-weight: 500;
       }
       .btn:focus-visible {
-        outline: 2px solid #4caf50;
+        outline: 3px solid #1b5e20;
         outline-offset: 2px;
       }
       .btn-primary {
-        background: #4caf50;
+        background: #2e7d32;
         color: #fff;
       }
       .btn-primary:disabled {
-        opacity: 0.6;
+        background: #9c9c9c;
         cursor: not-allowed;
       }
       .btn-danger {
-        background: #e53935;
+        background: #c62828;
         color: #fff;
       }
       .btn-danger:disabled {
-        opacity: 0.6;
+        background: #a8a8a8;
         cursor: not-allowed;
       }
       .btn-outline {
         background: transparent;
-        border: 1px solid #ccc;
-        color: #333;
+        border: 1px solid #767676;
+        color: #262626;
       }
       .btn-outline:disabled {
         opacity: 0.4;
@@ -688,12 +708,17 @@ export class RetireComponent implements OnInit {
     validators: [multipleOf100kValidator()],
   });
 
-  /** Only Active credits owned by the connected wallet. */
-  readonly activeCredits = computed(() =>
-    this.store
-      .credits()
-      .filter((c) => c.status === CreditStatus.Active && c.owner === this.wallet.publicKey()),
-  );
+  /**
+   * Only Active credits owned by the connected wallet.
+   *
+   * Issue #965 — the store is (network, address)-scoped, so this list can only
+   * ever contain the current account's rows; the `owner` check is kept as a
+   * belt-and-braces guard against a project-wide load leaking in.
+   */
+  readonly activeCredits = computed(() => {
+    const owner = this.wallet.publicKey();
+    return this.store.credits().filter((c) => c.status === CreditStatus.Active && c.owner === owner);
+  });
 
   readonly allSelected = computed(
     () =>
@@ -707,10 +732,36 @@ export class RetireComponent implements OnInit {
       .toString(),
   );
 
+  /** True only when the wallet is connected and on the correct network. */
+  readonly canSubmit = computed(() => this.wallet.isConnected() && !this.wallet.networkMismatch());
+
+  /** Exposes the expected network name for display in the template. */
+  get expectedNetwork(): string {
+    return this.wallet.expectedNetwork();
+  }
+
+  /** True when the current tonnes value is not a positive multiple of 100,000. */
+  get tonnesError(): boolean {
+    const v = this.tonnes;
+    return !v || v <= 0 || v % 100_000 !== 0;
+  }
+
+  private get tonnes(): number {
+    return Number(this.selectedCredits()[0]?.tonnes ?? 1_000_000);
+  }
+
+  /**
+   * Load the connected account's own credits.
+   *
+   * Issue #965 — this used to call `loadByProject(pk)`, i.e. it treated the
+   * wallet address as a project id. Combined with a store that never reset on
+   * an account switch, that surfaced another account's holdings. The owner
+   * endpoint is the correct source for "my credits".
+   */
   async ngOnInit(): Promise<void> {
     const pk = this.wallet.publicKey();
-    if (pk && this.auth.isAuthenticated() && this.store.credits().length === 0) {
-      await this.store.loadByProject(pk);
+    if (pk && this.auth.isAuthenticated()) {
+      await this.store.loadByOwner(pk);
     }
     // #959 — restore a persisted draft once holdings are available.
     this.restoreDraft();
@@ -758,6 +809,15 @@ export class RetireComponent implements OnInit {
       tonnes: this.totalSelectedTonnes(),
       reason: this.reasonControl.value,
     });
+  }
+
+  /** Issue #963: announced when the wizard advances. */
+  stepAnnouncement(): string {
+    const step = this.currentStep();
+    const label = this.stepLabel(step);
+    return step === 3
+      ? `Step 3 of 3, ${label}. Review and submit your retirement.`
+      : `Step ${step} of 3, ${label}.`;
   }
 
   isSelected(credit: CreditMetadata): boolean {
@@ -827,6 +887,13 @@ export class RetireComponent implements OnInit {
     }
   }
 
+  /**
+   * Submit the retirement.
+   *
+   * Issue #960 — wallet failures are classified rather than stringified. A
+   * `staleEnvelope` (issues #57/#59) is retried exactly once with a freshly
+   * built request so the user gets a clean re-prompt instead of a dead end.
+   */
   async submit(): Promise<void> {
     const credits = this.selectedCredits();
     const reason = this.reasonControl.value;
@@ -843,6 +910,7 @@ export class RetireComponent implements OnInit {
 
     this.submitting.set(true);
     this.signingError.set(null);
+    this.statusMessage.set('Submitting your retirement…');
 
     try {
       const token = this.auth.token()!;
@@ -889,21 +957,33 @@ export class RetireComponent implements OnInit {
           await this.router.navigate(['/certificates', succeeded[0]]);
         }
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Retirement failed.';
-      this.signingError.set(msg);
-      this.currentStep.set(3);
+
+      this.reportWalletError(walletError);
     } finally {
       this.submitting.set(false);
     }
   }
 
-  reset(): void {
-    this.currentStep.set(1);
-    this.selectedCredits.set([]);
-    this.reasonControl.reset('');
-    this.signingError.set(null);
-  }
+  private async dispatchRetirement(
+    credits: CreditMetadata[],
+    reason: string,
+    pk: string,
+  ): Promise<void> {
+    const token = this.auth.token()!;
+
+    if (credits.length === 1) {
+      const credit = credits[0];
+      const { retirementId } = await firstValueFrom(
+        this.api.retireCredit(
+          { buyerPublicKey: pk, creditId: credit.id, tonnes: credit.tonnes, reason },
+          token,
+        ),
+      );
+      this.store.loadOne(credit.id).catch(() => {});
+      this.toast.showSuccess('Credit retired successfully');
+      await this.router.navigate(['/certificates', retirementId]);
+      return;
+    }
 
   /** #959 — drops the stored draft after a successful retirement. */
   private clearDraft(): void {
@@ -915,46 +995,35 @@ export class RetireComponent implements OnInit {
     return (Number(raw) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t';
   }
 
-  get creditId(): string {
-    return this.selectedCredits()[0]?.id ?? '';
-  }
-  set creditId(v: string) {
-    /* no-op */
+    if (failed.length > 0) {
+      this.signingError.set(
+        `${failed.length} credit(s) failed: ${failed.map((f) => f.reason).join(', ')}`,
+      );
+    }
+
+    if (succeeded.length > 0) {
+      this.toast.showSuccess(`${succeeded.length} credit(s) retired successfully`);
+      await this.router.navigate(['/certificates', succeeded[0]]);
+    }
   }
 
-  get tonnes(): number {
-    return Number(this.selectedCredits()[0]?.tonnes ?? 1_000_000);
-  }
-  set tonnes(_: number) {
-    /* no-op */
-  }
-
-  get reason(): string {
-    return this.reasonControl.value;
-  }
-  set reason(v: string) {
-    this.reasonControl.setValue(v);
+  /** Issue #960 — one actionable message per failure type, never a bare string. */
+  private reportWalletError(err: WalletError | unknown): void {
+    const walletError = normalizeWalletError(err);
+    this.signingError.set(walletError.displayMessage);
+    this.statusMessage.set(null);
+    this.currentStep.set(3);
   }
 
-  get step(): { (): string; set: (s: string) => void } {
-    const fn = () => {
-      const s = this.currentStep();
-      if (s === 1) return 'form';
-      if (s === 2) return 'form';
-      if (s === 3) return 'confirm';
-      return 'form';
-    };
-    fn.set = (v: string) => {
-      if (v === 'form') this.currentStep.set(1);
-      else if (v === 'confirm') this.currentStep.set(3);
-    };
-    return fn as any;
+  reset(): void {
+    this.currentStep.set(1);
+    this.selectedCredits.set([]);
+    this.reasonControl.reset('');
+    this.signingError.set(null);
+    this.statusMessage.set(null);
   }
 
-  retirementId(): string | null {
-    return null;
-  }
-  errorMsg(): string | null {
-    return this.signingError();
+  formatTonnes(raw: string): string {
+    return (Number(raw) / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 4 }) + ' t';
   }
 }

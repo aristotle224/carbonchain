@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal, computed } from '@angular/core';
+import { Component, inject, OnInit, signal, computed, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
@@ -562,13 +562,36 @@ export class PortfolioComponent implements OnInit {
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
+  constructor() {
+    // Issue #965 — the store clears itself on an account/network switch, so the
+    // derived analytics go empty rather than showing the previous account's
+    // numbers. Reload for the new account so the correct holdings appear
+    // immediately rather than after a manual refresh.
+    effect(() => {
+      const pk = this.wallet.publicKey();
+      if (!pk) {
+        this.retirements.set([]);
+        this.loadError.set(null);
+        return;
+      }
+      void this.loadFor(pk);
+    });
+  }
+
   async ngOnInit(): Promise<void> {
     const pk = this.wallet.publicKey();
-    if (!pk) return;
+    if (pk) await this.loadFor(pk);
+  }
+
+  private async loadFor(owner: string): Promise<void> {
     this.loading.set(true);
     this.loadError.set(null);
     try {
-      await this.store.loadByProject(pk);
+      // Issue #965: this used to call loadByProject(pk) — the wallet address was
+      // being passed as a project id, which is how one account's holdings could
+      // be attributed to another. The owner endpoint is the correct source.
+      await this.store.loadByOwner(owner);
+      this.retirements.set([]);
       await this.loadRetirements();
     } catch (err) {
       this.loadError.set(err instanceof Error ? err.message : 'Failed to load portfolio data.');
