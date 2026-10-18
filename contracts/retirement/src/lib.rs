@@ -24,6 +24,46 @@ use soroban_sdk::{
     contract, contractevent, contractimpl, Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 
+fn get_version(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::Version)
+        .unwrap_or(0)
+}
+
+fn set_version(env: &Env, version: u32) {
+    env.storage().instance().set(&DataKey::Version, &version);
+}
+
+/// Run all pending migration steps in order from the currently stored version
+/// up to `target_version`. Each step is idempotent: it only executes when
+/// `get_version(env) == step - 1`.
+///
+/// # Errors
+/// - [`RetirementError::DowngradeNotAllowed`] — `target_version` is less than the current version.
+pub fn run_migrations(env: &Env, target_version: u32) -> Result<(), RetirementError> {
+    let mut current = get_version(env);
+
+    if target_version < current {
+        return Err(RetirementError::DowngradeNotAllowed);
+    }
+
+    while current < target_version {
+        match current {
+            0 => migrate_v0_to_v1(env),
+            _ => break,
+        }
+        current += 1;
+        set_version(env, current);
+    }
+
+    Ok(())
+}
+
+fn migrate_v0_to_v1(_env: &Env) {
+    // v1 introduced explicit version tracking; no data transformation needed.
+}
+
 fn get_nonce(env: &Env, addr: &Address) -> u64 {
     env.storage()
         .persistent()
@@ -563,6 +603,11 @@ impl Retirement {
         get_nonce(&env, &address)
     }
 
+    /// Returns the current contract schema version stored in instance storage.
+    pub fn get_version(env: Env) -> u32 {
+        get_version(&env)
+    }
+
     // ── Issue 3: Contract Upgrade Mechanism ──────────────────────────────────
 
     /// Upgrade the contract WASM to a new hash. Only the admin may call this.
@@ -574,6 +619,7 @@ impl Retirement {
     /// - [`RetirementError::NotInitialized`] — contract has not been initialised.
     /// - [`RetirementError::Unauthorized`] — caller is not the admin.
     /// - [`RetirementError::InvalidNonce`] — `nonce` does not match the current admin nonce.
+    /// - [`RetirementError::DowngradeNotAllowed`] — `new_wasm_hash` targets an older version.
     pub fn upgrade(
         env: Env,
         admin: Address,
