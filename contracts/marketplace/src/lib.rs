@@ -222,6 +222,13 @@ fn get_nonce(env: &Env, addr: &Address) -> u64 {
         .unwrap_or(0u64)
 }
 
+/// #1095 — no-op migration stub. Called by `upgrade` before swapping WASM.
+/// Future schema migrations go here as the contract evolves.
+fn run_migrations(_env: &Env) {
+    // No-op for v1 → v2 transition.
+    // Add field back-fills or index rebuilds here in future versions.
+}
+
 #[allow(clippy::too_many_arguments)]
 #[contractimpl]
 impl Marketplace {
@@ -292,6 +299,83 @@ impl Marketplace {
             .unwrap_or(false)
     }
 
+    // ── #1095 — Version / Migration ─────────────────────────────────────────
+
+    /// Returns the current schema version of the contract.
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::Version)
+            .unwrap_or(1u32)
+    }
+
+    // ── #1096 — Allowed token management ────────────────────────────────────
+
+    /// Returns the list of admin-approved SAC token addresses.
+    pub fn get_allowed_tokens(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::AllowedTokens)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Add a token address to the admin-approved allowed list.
+    ///
+    /// # Errors
+    /// - [`MarketplaceError::NotInitialized`] / [`MarketplaceError::Unauthorized`]
+    pub fn add_allowed_token(
+        env: Env,
+        admin: Address,
+        token: Address,
+        nonce: u64,
+    ) -> Result<(), MarketplaceError> {
+        Self::require_admin(&env, &admin)?;
+        if !Self::consume_nonce(&env, &admin, nonce) {
+            return Err(MarketplaceError::InvalidNonce);
+        }
+        let mut tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllowedTokens)
+            .unwrap_or_else(|| Vec::new(&env));
+        // Only add if not already present
+        if !tokens.iter().any(|t| t == token) {
+            tokens.push_back(token);
+            env.storage()
+                .instance()
+                .set(&DataKey::AllowedTokens, &tokens);
+        }
+        Ok(())
+    }
+
+    /// Remove a token address from the admin-approved allowed list.
+    ///
+    /// # Errors
+    /// - [`MarketplaceError::NotInitialized`] / [`MarketplaceError::Unauthorized`]
+    pub fn remove_allowed_token(
+        env: Env,
+        admin: Address,
+        token: Address,
+        nonce: u64,
+    ) -> Result<(), MarketplaceError> {
+        Self::require_admin(&env, &admin)?;
+        if !Self::consume_nonce(&env, &admin, nonce) {
+            return Err(MarketplaceError::InvalidNonce);
+        }
+        let mut tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllowedTokens)
+            .unwrap_or_else(|| Vec::new(&env));
+        if let Some(pos) = tokens.iter().position(|t| t == token) {
+            tokens.remove(pos as u32);
+            env.storage()
+                .instance()
+                .set(&DataKey::AllowedTokens, &tokens);
+        }
+        Ok(())
+    }
+
     // ── Offers ───────────────────────────────────────────────────────────────
 
     /// List a credit for sale with XLM pricing. Returns the new offer ID.
@@ -343,7 +427,8 @@ impl Marketplace {
     /// The buyer must hold enough of the specified asset before calling [`buy_offer`].
     ///
     /// # Errors
-    /// Same as [`create_offer`].
+    /// Same as [`create_offer`], plus:
+    /// - [`MarketplaceError::InvalidToken`] — `price_asset` is not in the allowed list.
     pub fn create_offer_with_asset(
         env: Env,
         seller: Address,
@@ -355,6 +440,12 @@ impl Marketplace {
         expires_at: Option<u64>,
         nonce: u64,
     ) -> Result<u64, MarketplaceError> {
+        // #1096 — validate SAC token is in allowed list
+        if let AssetType::Asset(ref sac) = price_asset {
+            if !Self::is_token_allowed(&env, sac) {
+                return Err(MarketplaceError::InvalidToken);
+            }
+        }
         Self::create_offer_internal(
             env,
             seller,
@@ -985,6 +1076,7 @@ impl Marketplace {
     /// - [`MarketplaceError::AlreadyClosed`] — offer has already been cancelled/filled.
     /// - [`MarketplaceError::OfferExpired`] — offer has expired.
     /// - [`MarketplaceError::InsufficientFunds`] — buyer balance is less than `price_amount`.
+    /// - [`MarketplaceError::InvalidToken`] — SAC token is not in the allowed list.
     /// - [`MarketplaceError::Overflow`] — price is zero or negative (corrupt state).
     pub fn buy_offer(
         env: Env,
@@ -1344,6 +1436,16 @@ impl Marketplace {
         true
     }
 
+    /// #1096 — returns true if the given token address is in the allowed list.
+    fn is_token_allowed(env: &Env, token: &Address) -> bool {
+        let tokens: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllowedTokens)
+            .unwrap_or_else(|| Vec::new(env));
+        tokens.iter().any(|t| &t == token)
+    }
+
     pub fn get_nonce(env: Env, address: Address) -> u64 {
         get_nonce(&env, &address)
     }
@@ -1351,6 +1453,13 @@ impl Marketplace {
     // ── Contract Upgrade ─────────────────────────────────────────────────────
 
     /// Upgrade the contract WASM to a new hash. Only the admin may call this.
+    ///
+    /// Execution order:
+    /// 1. Validate admin identity and nonce.
+    /// 2. Run `run_migrations` (any schema changes for the new version).
+    /// 3. Increment `DataKey::Version`.
+    /// 4. Swap the WASM.
+    /// 5. Emit `ContractUpgraded` event.
     ///
     /// # Errors
     /// - [`MarketplaceError::NotInitialized`] — contract has not been initialised.
@@ -1366,7 +1475,21 @@ impl Marketplace {
         if !Self::consume_nonce(&env, &admin, nonce) {
             return Err(MarketplaceError::InvalidNonce);
         }
+        // Run migrations BEFORE swapping WASM so the new code sees migrated state.
+        run_migrations(&env);
+        // Increment version
+        let current_version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Version)
+            .unwrap_or(1u32);
+        let new_version = current_version + 1;
+        env.storage()
+            .instance()
+            .set(&DataKey::Version, &new_version);
+        // Swap WASM
         env.deployer().update_current_contract_wasm(new_wasm_hash);
+        ContractUpgraded { admin, new_version }.publish(&env);
         Ok(())
     }
 }
