@@ -8,6 +8,8 @@ build/
 .yarn/
 yarn.lock
 pnpm-lock.yaml
+*.tgz
+*.tar.gz
 
 # Packed npm tarballs
 *.tgz
