@@ -175,6 +175,74 @@ function buildMockDataSource() {
       return result;
     }
 
+    // SELECT aggregated delivery metrics (getWebhookMetrics)
+    if (
+      s.includes('FROM webhook_deliveries') &&
+      (s.includes('COUNT(') || s.includes('AVG(') || s.includes('GROUP BY'))
+    ) {
+      const all = Object.values(deliveries);
+      const byStatus = (status: string) =>
+        all.filter((d) => d.status === status).length;
+      const succeeded = all.filter((d) => d.status === 'success');
+      const latencies = succeeded
+        .map((d) =>
+          d.last_attempt_at
+            ? d.last_attempt_at.getTime() - d.created_at.getTime()
+            : null,
+        )
+        .filter((v): v is number => v !== null);
+      const avgLatency = latencies.length
+        ? latencies.reduce((a, b) => a + b, 0) / latencies.length
+        : 0;
+
+      if (s.includes('GROUP BY') && s.includes('event_type')) {
+        const groups: Record<string, { total: number; failed: number }> = {};
+        for (const d of all) {
+          groups[d.event_type] = groups[d.event_type] ?? {
+            total: 0,
+            failed: 0,
+          };
+          groups[d.event_type].total += 1;
+          if (d.status === 'failed') groups[d.event_type].failed += 1;
+        }
+        return Object.entries(groups).map(([event_type, g]) => ({
+          event_type,
+          total: g.total,
+          failed: g.failed,
+        }));
+      }
+
+      if (s.includes('GROUP BY') && s.includes('webhook_id')) {
+        const groups: Record<string, { total: number; failed: number }> = {};
+        for (const d of all) {
+          groups[d.webhook_id] = groups[d.webhook_id] ?? {
+            total: 0,
+            failed: 0,
+          };
+          groups[d.webhook_id].total += 1;
+          if (d.status === 'failed') groups[d.webhook_id].failed += 1;
+        }
+        return Object.entries(groups)
+          .map(([webhook_id, g]) => ({
+            webhook_id,
+            url: webhooks[webhook_id]?.url ?? null,
+            total: g.total,
+            failed: g.failed,
+          }))
+          .sort((a, b) => b.failed - a.failed);
+      }
+
+      return [
+        {
+          total: all.length,
+          success: byStatus('success'),
+          failed: byStatus('failed'),
+          pending: byStatus('pending'),
+          avg_latency_ms: avgLatency,
+        },
+      ];
+    }
+
     // UPDATE delivery status
     if (s.startsWith('UPDATE webhook_deliveries')) {
       const id = (params as string[])[0];

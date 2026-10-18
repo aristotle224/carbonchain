@@ -20,9 +20,11 @@ import type {
   Webhook,
   WebhookDelivery,
   WebhookRegistrationResult,
+  WebhookMetrics,
 } from './webhooks.service';
 import { WebhooksService } from './webhooks.service';
 import { WebhookIpAllowlistGuard } from './webhook-ip-allowlist.guard';
+import { AdminGuard } from '../auth/admin.guard';
 import {
   WebhookJanitorService,
   JanitorStats,
